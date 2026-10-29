@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app import audio, jobs
+from app import audio, jobs, summarize
 from app.config import get_settings
 from app.export import FORMATS
 
@@ -36,11 +36,22 @@ async def cleanup_loop():
         await asyncio.sleep(settings.cleanup_interval_minutes * 60)
 
 
+def warm_up():
+    # Importing the LLM SDK and building its client takes ~2 s of CPU: 20+ s on a 0.1 CPU host.
+    # Do it in the background at startup so the first job doesn't pay for it.
+    try:
+        summarize.get_models()
+        log.info("Summary models ready")
+    except Exception:
+        log.exception("Could not prepare summary models")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if not audio.ffmpeg_available():
         log.warning("ffmpeg/ffprobe not found on PATH: uploads will fail until it is installed")
     log.info("Transcription: %s · summaries: %s", settings.transcribe_provider, settings.llm_provider)
+    asyncio.get_running_loop().run_in_executor(None, warm_up)
     task = asyncio.create_task(cleanup_loop())
     yield
     task.cancel()

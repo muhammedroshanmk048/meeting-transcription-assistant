@@ -131,7 +131,7 @@ def reserve_audio_budget(seconds: float) -> None:
 
 def _set(job: Job, status: str, message: str) -> None:
     job.status, job.message = status, message
-    log.info("Job %s: %s (%s)", job.id, status, message)
+    log.info("Job %s: %s (%s) at +%.1fs", job.id, status, message, time.time() - job.created_at)
 
 
 def run(job: Job, upload: Path) -> None:

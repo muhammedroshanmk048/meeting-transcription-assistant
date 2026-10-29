@@ -1,4 +1,7 @@
 import json
+import logging
+import time
+from functools import lru_cache
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
@@ -7,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.transcribe import Segment
 
+log = logging.getLogger("summarize")
 settings = get_settings()
 
 
@@ -52,29 +56,39 @@ MERGE_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-def get_llm() -> Runnable:
+@lru_cache
+def get_models() -> list[tuple[str, Runnable]]:
+    """(name, model) pairs in the order to try them. Built once: client setup costs seconds on a 0.1 CPU host."""
     if settings.llm_provider == "ollama":
         from langchain_ollama import ChatOllama
 
         llm = ChatOllama(model=settings.ollama_model, base_url=settings.ollama_base_url, temperature=0.2)
-        return llm.with_structured_output(MeetingNotes)
+        return [(settings.ollama_model, llm.with_structured_output(MeetingNotes))]
 
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     if not settings.google_api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set. Add it to .env or switch LLM_PROVIDER to ollama.")
 
-    def gemini(model: str) -> Runnable:
-        # Fail fast on free-tier 503s instead of retrying for minutes
+    def gemini(model: str, retries: int) -> Runnable:
         llm = ChatGoogleGenerativeAI(
-            model=model, google_api_key=settings.google_api_key, temperature=0.2, max_retries=1, timeout=120
+            model=model, google_api_key=settings.google_api_key, temperature=0.2, max_retries=retries, timeout=90
         )
         return llm.with_structured_output(MeetingNotes)
 
-    llm = gemini(settings.gemini_model)
-    if settings.gemini_fallback_model:
-        llm = llm.with_fallbacks([gemini(settings.gemini_fallback_model)])
-    return llm
+    if not settings.gemini_fallback_model:
+        return [(settings.gemini_model, gemini(settings.gemini_model, 1))]
+    # No retries on the main model: with a fallback ready, a 503 or quota error should switch over at once
+    return [
+        (settings.gemini_model, gemini(settings.gemini_model, 0)),
+        (settings.gemini_fallback_model, gemini(settings.gemini_fallback_model, 1)),
+    ]
+
+
+# Free-tier daily quotas are small (20 requests/day on the main Flash model), so once one is used up,
+# skip that model for a while instead of paying for a failed call on every job
+_skip_until: dict[str, float] = {}
+QUOTA_COOLDOWN_SECONDS = 3600
 
 
 def clock(seconds: float) -> str:
@@ -99,28 +113,41 @@ def chunk_lines(lines: list[str], max_chars: int) -> list[str]:
     return chunks
 
 
-def _invoke(llm: Runnable, messages) -> MeetingNotes:
-    notes = llm.invoke(messages)
-    # Structured output returns None when the model's reply doesn't match the schema
-    if not isinstance(notes, MeetingNotes):
-        raise RuntimeError("The summary model returned an unexpected format")
-    return notes
+def _invoke(messages) -> MeetingNotes:
+    models = get_models()
+    available = [(n, m) for n, m in models if _skip_until.get(n, 0) < time.time()] or models[-1:]
+    for i, (name, llm) in enumerate(available):
+        started = time.time()
+        try:
+            notes = llm.invoke(messages)
+            # Structured output returns None when the model's reply doesn't match the schema
+            if not isinstance(notes, MeetingNotes):
+                raise RuntimeError("The summary model returned an unexpected format")
+        except Exception as e:
+            log.warning("%s failed after %.1fs: %s", name, time.time() - started, str(e)[:200])
+            if "RESOURCE_EXHAUSTED" in str(e) and len(models) > 1:
+                _skip_until[name] = time.time() + QUOTA_COOLDOWN_SECONDS
+            if i == len(available) - 1:
+                raise
+            continue
+        log.info("Summary by %s in %.1fs", name, time.time() - started)
+        return notes
+    raise RuntimeError("No summary model available")
 
 
 def summarize(segments: list[Segment], progress=lambda _: None) -> MeetingNotes:
     if not segments:
         return MeetingNotes(title="Empty recording", summary="No speech was detected in this recording.")
-    llm = get_llm()
     chunks = chunk_lines(transcript_lines(segments), settings.summary_chunk_chars)
     if len(chunks) == 1:
-        return _invoke(llm, SUMMARY_PROMPT.format_messages(part_note="", transcript=chunks[0]))
+        return _invoke(SUMMARY_PROMPT.format_messages(part_note="", transcript=chunks[0]))
 
     # Map-reduce: notes per part, then one merge call over the (much shorter) partial notes
     parts = []
     for i, chunk in enumerate(chunks, 1):
         progress(f"Summarizing part {i} of {len(chunks)}")
         note = f"This is part {i} of {len(chunks)} of a longer meeting.\n\n"
-        parts.append(_invoke(llm, SUMMARY_PROMPT.format_messages(part_note=note, transcript=chunk)))
+        parts.append(_invoke(SUMMARY_PROMPT.format_messages(part_note=note, transcript=chunk)))
     progress("Merging notes")
     merged = "\n\n".join(f"Part {i}:\n{json.dumps(p.model_dump(), ensure_ascii=False)}" for i, p in enumerate(parts, 1))
-    return _invoke(llm, MERGE_PROMPT.format_messages(parts=merged))
+    return _invoke(MERGE_PROMPT.format_messages(parts=merged))
