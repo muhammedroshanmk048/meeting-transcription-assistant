@@ -1,0 +1,5 @@
+# Local-only engines (TRANSCRIBE_PROVIDER=local). Never installed in the Docker image:
+# they pull in PyTorch and need far more than the free host's 512 MB.
+-r requirements.txt
+faster-whisper
+whisperx

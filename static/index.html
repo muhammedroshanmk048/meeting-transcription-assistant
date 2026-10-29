@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MeetScribe · Meeting Transcription Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">Meet<span>Scribe</span></div>
+    <p class="hint">Upload a meeting recording. Get a timestamped transcript, a summary, key decisions and action items.</p>
+
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4,.webm,.ogg,.opus,.flac,.aac,.mov,.mkv" hidden />
+      <strong>Drop a recording here</strong>
+      <span>or click to browse · mp3 m4a wav mp4 webm…</span>
+    </label>
+
+    <div class="status" id="status"></div>
+
+    <h3>Recordings</h3>
+    <ul class="jobs" id="jobs"><li class="empty">No recordings yet</li></ul>
+    <p class="hint limits" id="limits"></p>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="welcome" id="welcome">
+      <h1>Turn meetings into notes</h1>
+      <p>ffmpeg audio processing · Whisper speech recognition · LLM summary with action items</p>
+    </div>
+
+    <section class="progress hidden" id="progress">
+      <h2 id="progressTitle"></h2>
+      <ol class="steps" id="steps">
+        <li data-step="queued">Queued</li>
+        <li data-step="converting">Converting</li>
+        <li data-step="transcribing">Transcribing</li>
+        <li data-step="summarizing">Summarizing</li>
+        <li data-step="done">Done</li>
+      </ol>
+      <p class="progress-msg" id="progressMsg"></p>
+    </section>
+
+    <section class="result hidden" id="result">
+      <header class="result-head">
+        <div>
+          <h1 id="title"></h1>
+          <p class="meta" id="meta"></p>
+        </div>
+        <div class="exports">
+          <button data-format="md">Markdown</button>
+          <button data-format="txt">.txt</button>
+          <button data-format="srt">.srt</button>
+        </div>
+      </header>
+
+      <audio id="player" controls class="hidden"></audio>
+      <p class="warn hidden" id="summaryError"></p>
+
+      <div class="cards" id="cards">
+        <article class="card wide"><h3>Summary</h3><p id="summary"></p></article>
+        <article class="card"><h3>Key decisions</h3><ul id="decisions"></ul></article>
+        <article class="card"><h3>Open questions</h3><ul id="questions"></ul></article>
+        <article class="card wide"><h3>Action items</h3><ul class="actions" id="actions"></ul></article>
+      </div>
+
+      <div class="transcript-head">
+        <h3>Transcript</h3>
+        <input type="search" id="search" placeholder="Search transcript…" />
+      </div>
+      <ol class="transcript" id="transcript"></ol>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
