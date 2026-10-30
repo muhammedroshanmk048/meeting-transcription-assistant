@@ -66,6 +66,11 @@ Done:
 - Owner tested the UI locally (2026-10-29) and approved it. Sample is now `samples/demo-meeting.mp3` (48 kbps).
 - Step 7: first commit made; remote `origin` = github.com/muhammedroshanmk048/meeting-transcription-assistant.
 
+- Step 8: deployed at https://meetscribe-5j70.onrender.com (Blueprint). Owner kept the original API keys (declined rotating). Live end-to-end works: health ok, ffmpeg present, sample clip → 8 segments, summary, 3 action items, exports.
+- Open issue (2026-10-29): live summary step takes 70–100 s for the 68 s sample (locally 2–14 s); upload + convert + transcribe take ~10 s. Cause found so far: `gemini-flash-latest` (= gemini-3.8-flash) free tier is only 20 requests/day, used up by testing. Commit `4847744` (live) caches model clients, warms them at startup, skips retries on the main model and skips it for 1 h after RESOURCE_EXHAUSTED; Render logs confirm the 429 is now caught in 0.2 s, so the remaining time is in the `gemini-flash-lite-latest` call or CPU on Render. Re-test on 2026-10-30 after the quota reset: the full live job took 16 s (upload + convert + transcribe ~12 s, summary ~4 s), all exports 200. So the slow summaries only happen once the main model's 20/day quota is used up and every summary goes to the lite model. If that keeps happening, consider making lite the primary model.
+
+- Step 9: MeetScribe card is live in `../project-zap/index.html` (commit `54165af`), linking the live demo and the repo.
+
 Not yet verified: Render memory use, local engines (step 5 skipped for now; README marks local mode as untested, `requirements-local.txt` unpinned).
 
 Steps:
